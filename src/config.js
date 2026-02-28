@@ -7,7 +7,11 @@ export const config = {
   },
   yellowfire: {
     apiKey: process.env.YELLOWFIRE_API_KEY,
+    apiKeys: process.env.YELLOWFIRE_API_KEY 
+      ? process.env.YELLOWFIRE_API_KEY.split(',').map(key => key.trim())
+      : [],
     model: process.env.MODEL || 'gpt-4o-mini',
+    currentKeyIndex: 0,
   },
   bot: {
     maxMessagesPerDay: parseInt(process.env.MAX_MESSAGES_PER_DAY) || 70,

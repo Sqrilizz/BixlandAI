@@ -5,28 +5,45 @@ import { normalizeForTTS } from '../utils/textNormalizer.js';
 
 const API_BASE = 'https://yellowfire.ru/api/v2';
 
-let elevenlabsTTS, piperTTS, googleTTS, checkPiperInstalled;
+let elevenlabsTTS, piperTTS, googleTTS, edgeTTS, checkPiperInstalled;
+
+function getNextApiKey() {
+  if (config.yellowfire.apiKeys.length === 0) {
+    return config.yellowfire.apiKey;
+  }
+  
+  if (config.yellowfire.apiKeys.length === 1) {
+    return config.yellowfire.apiKeys[0];
+  }
+  
+  const key = config.yellowfire.apiKeys[config.yellowfire.currentKeyIndex];
+  config.yellowfire.currentKeyIndex = (config.yellowfire.currentKeyIndex + 1) % config.yellowfire.apiKeys.length;
+  
+  logger.debug(`Using API key ${config.yellowfire.currentKeyIndex + 1}/${config.yellowfire.apiKeys.length}`);
+  
+  return key;
+}
 
 async function loadTTSModules() {
   if (!elevenlabsTTS) {
     const modules = await Promise.all([
       import('./tts/elevenlabsTTS.js'),
       import('./tts/piperTTS.js'),
-      import('./tts/googleTTS.js')
+      import('./tts/googleTTS.js'),
+      import('./tts/edgeTTS.js')
     ]);
     elevenlabsTTS = modules[0].generateElevenLabsTTS;
     piperTTS = modules[1].generatePiperTTS;
     checkPiperInstalled = modules[1].checkPiperInstalled;
     googleTTS = modules[2].generateGoogleTTS;
+    edgeTTS = modules[3].generateEdgeTTS;
   }
 }
 
 export async function generateResponse(prompt, chatHistory = []) {
   try {
-    // Convert chat history to proper format if needed
     const formattedHistory = chatHistory.map(msg => {
       if (typeof msg === 'string') {
-        // Parse "username: message" format
         const match = msg.match(/^(.+?):\s*(.+)$/);
         if (match) {
           return {
@@ -42,17 +59,18 @@ export async function generateResponse(prompt, chatHistory = []) {
       return msg;
     });
 
-    // Step 1: Create task
+    const apiKey = getNextApiKey();
+    
     const taskResponse = await axios.post(`${API_BASE}/chatgpt`, {
       model: config.yellowfire.model,
       prompt: prompt,
       chat_history: formattedHistory,
-      internet_access: false, // Using Brave Search instead
+      internet_access: false,
       file_base64: '',
       mime_type: '',
     }, {
       headers: {
-        'api-key': config.yellowfire.apiKey,
+        'api-key': apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -60,14 +78,12 @@ export async function generateResponse(prompt, chatHistory = []) {
     const { request_id, wait } = taskResponse.data;
     logger.debug(`Got request_id: ${request_id}, waiting ${wait}s`);
 
-    // Step 2: Wait
     await new Promise(resolve => setTimeout(resolve, wait * 1000));
 
-    // Step 3: Poll for result
     for (let attempt = 0; attempt < 30; attempt++) {
       const statusResponse = await axios.get(`${API_BASE}/status/${request_id}`, {
         headers: {
-          'api-key': config.yellowfire.apiKey,
+          'api-key': apiKey,
         },
       });
 
@@ -92,7 +108,7 @@ export async function generateResponse(prompt, chatHistory = []) {
 }
 
 export async function generateTTS(text) {
-  const ttsProvider = process.env.TTS_PROVIDER || 'yellowfire';
+  const ttsProvider = process.env.TTS_PROVIDER || 'edge';
   
   await loadTTSModules();
   
@@ -100,6 +116,12 @@ export async function generateTTS(text) {
   logger.debug(`TTS normalized: "${text.slice(0, 50)}..." -> "${normalizedText.slice(0, 50)}..."`);
   
   try {
+    if (ttsProvider === 'edge') {
+      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
+      logger.debug(`Using Edge TTS: ${voiceName}`);
+      return await edgeTTS(normalizedText, voiceName);
+    }
+    
     if (ttsProvider === 'google') {
       const voiceName = process.env.GOOGLE_TTS_VOICE || 'ru-RU-Wavenet-B';
       logger.debug(`Using Google TTS: ${voiceName}`);
@@ -113,8 +135,8 @@ export async function generateTTS(text) {
         return await piperTTS(normalizedText, voiceModel);
       } catch (error) {
         logger.error(`Piper TTS failed: ${error.message}`);
-        logger.warn('Falling back to YellowFire TTS');
-        return await generateYellowFireTTS(normalizedText);
+        logger.warn('Falling back to Edge TTS');
+        return await edgeTTS(normalizedText);
       }
     }
     
@@ -128,12 +150,22 @@ export async function generateTTS(text) {
       return await elevenlabsTTS(normalizedText, apiKey, voiceId);
     }
     
-    logger.debug('Using YellowFire TTS');
-    return await generateYellowFireTTS(normalizedText);
-  } catch (error) {
-    if (ttsProvider !== 'yellowfire') {
-      logger.warn(`${ttsProvider} TTS failed, falling back to YellowFire`);
+    if (ttsProvider === 'yellowfire') {
+      logger.debug('Using YellowFire TTS');
       return await generateYellowFireTTS(normalizedText);
+    }
+    
+    logger.debug('Using Edge TTS (default)');
+    return await edgeTTS(normalizedText);
+  } catch (error) {
+    if (ttsProvider !== 'edge') {
+      logger.warn(`${ttsProvider} TTS failed, falling back to Edge TTS`);
+      try {
+        return await edgeTTS(normalizedText);
+      } catch (edgeError) {
+        logger.error('Edge TTS also failed');
+        throw edgeError;
+      }
     }
     
     logger.error('TTS error:', error.message);
@@ -146,13 +178,15 @@ async function generateYellowFireTTS(text) {
     const voice = config.voice.ttsVoice;
     logger.debug(`TTS using voice: ${voice}`);
     
+    const apiKey = getNextApiKey();
+    
     const taskResponse = await axios.post(`${API_BASE}/tts`, {
       model: 'elevenlabs',
       prompt: text,
       voice: voice,
     }, {
       headers: {
-        'api-key': config.yellowfire.apiKey,
+        'api-key': apiKey,
         'Content-Type': 'application/json',
       },
     });
@@ -165,7 +199,7 @@ async function generateYellowFireTTS(text) {
     for (let attempt = 0; attempt < 30; attempt++) {
       const statusResponse = await axios.get(`${API_BASE}/status/${request_id}`, {
         headers: {
-          'api-key': config.yellowfire.apiKey,
+          'api-key': apiKey,
         },
       });
 
