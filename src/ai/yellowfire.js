@@ -174,11 +174,16 @@ async function generateYellowFireTTS(text) {
       logger.debug(`TTS status: ${status}, attempt: ${attempt + 1}`);
 
       if (status === 'completed' || status === 'success') {
+        logger.debug('TTS response:', JSON.stringify(response).slice(0, 500));
+        
         const dataUri = response.voice_model_v3?.[0];
         if (!dataUri) {
-          logger.error('No audio data in response:', JSON.stringify(response).slice(0, 200));
+          logger.error('No audio data in response. Full response:', JSON.stringify(response));
           throw new Error('No audio data in response');
         }
+
+        logger.debug('Data URI length:', dataUri.length);
+        logger.debug('Data URI prefix:', dataUri.slice(0, 100));
 
         if (!dataUri.includes('base64,')) {
           logger.error('Invalid data URI format:', dataUri.slice(0, 100));
@@ -186,8 +191,10 @@ async function generateYellowFireTTS(text) {
         }
 
         const base64Data = dataUri.split(',')[1];
+        logger.debug('Base64 data length:', base64Data ? base64Data.length : 0);
+        
         if (!base64Data || base64Data.length === 0) {
-          logger.error('Empty base64 data');
+          logger.error('Empty base64 data. Full dataUri:', dataUri);
           throw new Error('Empty audio data');
         }
         
