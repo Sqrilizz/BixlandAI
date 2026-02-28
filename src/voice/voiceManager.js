@@ -433,33 +433,54 @@ class VoiceManager {
     try {
       const tempPath = path.join('/tmp', filename);
       fs.writeFileSync(tempPath, audioBuffer);
+      
+      if (!fs.existsSync(tempPath)) {
+        throw new Error('Failed to write audio file');
+      }
 
       return new Promise((resolve, reject) => {
+        let cleanupDone = false;
+        
+        const cleanup = () => {
+          if (cleanupDone) return;
+          cleanupDone = true;
+          
+          setTimeout(() => {
+            try {
+              if (fs.existsSync(tempPath)) {
+                fs.unlinkSync(tempPath);
+              }
+            } catch (e) {
+              logger.debug('Cleanup error:', e.message);
+            }
+          }, 1000);
+        };
+
         const opusEncoder = new prism.opus.Encoder({
           rate: 48000,
           channels: 2,
           frameSize: 960,
         });
 
-        const ffmpegStream = ffmpeg(tempPath)
+        const ffmpegProcess = ffmpeg(tempPath)
           .audioFrequency(48000)
           .audioChannels(2)
           .format('s16le')
+          .on('start', (cmd) => {
+            logger.debug('FFmpeg started');
+          })
           .on('error', (err) => {
             logger.error('FFmpeg error:', err);
+            connection.setSpeaking(false);
             cleanup();
             reject(err);
           })
-          .pipe();
+          .on('end', () => {
+            logger.debug('FFmpeg finished');
+          });
 
+        const ffmpegStream = ffmpegProcess.pipe();
         ffmpegStream.pipe(opusEncoder);
-
-        const cleanup = () => {
-          try {
-            fs.unlinkSync(tempPath);
-          } catch (e) {
-          }
-        };
 
         connection.setSpeaking(true);
 
