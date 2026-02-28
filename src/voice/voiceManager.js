@@ -434,12 +434,18 @@ class VoiceManager {
       const tempPath = path.join('/tmp', filename);
       fs.writeFileSync(tempPath, audioBuffer);
       
+      logger.debug(`Audio file written: ${tempPath}, size: ${audioBuffer.length} bytes`);
+      
       if (!fs.existsSync(tempPath)) {
         throw new Error('Failed to write audio file');
       }
+      
+      const stats = fs.statSync(tempPath);
+      logger.debug(`File exists, size on disk: ${stats.size} bytes`);
 
       return new Promise((resolve, reject) => {
         let cleanupDone = false;
+        let hasData = false;
         
         const cleanup = () => {
           if (cleanupDone) return;
@@ -453,7 +459,7 @@ class VoiceManager {
             } catch (e) {
               logger.debug('Cleanup error:', e.message);
             }
-          }, 1000);
+          }, 2000);
         };
 
         const opusEncoder = new prism.opus.Encoder({
@@ -463,17 +469,21 @@ class VoiceManager {
         });
 
         const ffmpegProcess = ffmpeg(tempPath)
+          .inputOptions(['-re'])
           .audioFrequency(48000)
           .audioChannels(2)
+          .audioCodec('pcm_s16le')
           .format('s16le')
           .on('start', (cmd) => {
-            logger.debug('FFmpeg started');
+            logger.debug('FFmpeg command:', cmd);
           })
           .on('error', (err) => {
-            logger.error('FFmpeg error:', err);
+            logger.error('FFmpeg error:', err.message);
             connection.setSpeaking(false);
             cleanup();
-            reject(err);
+            if (!hasData) {
+              reject(err);
+            }
           })
           .on('end', () => {
             logger.debug('FFmpeg finished');
@@ -485,6 +495,7 @@ class VoiceManager {
         connection.setSpeaking(true);
 
         opusEncoder.on('data', (chunk) => {
+          hasData = true;
           if (connection.state.status === 'ready') {
             try {
               connection.dispatchAudio(chunk);
@@ -510,9 +521,15 @@ class VoiceManager {
 
         setTimeout(() => {
           connection.setSpeaking(false);
-          logger.warn('Audio playback timeout');
-          cleanup();
-          resolve();
+          if (hasData) {
+            logger.success('✅ Audio playback finished (timeout)');
+            cleanup();
+            resolve();
+          } else {
+            logger.warn('Audio playback timeout - no data');
+            cleanup();
+            reject(new Error('No audio data received'));
+          }
         }, 30000);
       });
     } catch (error) {
