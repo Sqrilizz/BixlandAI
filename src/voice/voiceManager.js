@@ -15,6 +15,8 @@ import { responseCoordinator } from '../utils/responseCoordinator.js';
 import { braveSearch } from '../utils/braveSearch.js';
 import { analyzeMessage } from '../utils/messageAnalyzer.js';
 import { getWeather, isWeatherQuery, extractCity } from '../utils/weatherAPI.js';
+import ffmpeg from 'fluent-ffmpeg';
+import { Readable } from 'stream';
 
 class VoiceManager {
   constructor() {
@@ -432,42 +434,65 @@ class VoiceManager {
       const tempPath = path.join('/tmp', filename);
       fs.writeFileSync(tempPath, audioBuffer);
 
-      let player = this.players.get(guildId);
-      if (!player) {
-        player = createAudioPlayer();
-        this.players.set(guildId, player);
-        connection.subscribe(player);
-      }
-
-      const resource = createAudioResource(tempPath);
-      player.play(resource);
-
       return new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          logger.warn('Audio playback timeout');
-          cleanup();
-          resolve();
-        }, 30000);
+        const opusEncoder = new prism.opus.Encoder({
+          rate: 48000,
+          channels: 2,
+          frameSize: 960,
+        });
+
+        const ffmpegStream = ffmpeg(tempPath)
+          .audioFrequency(48000)
+          .audioChannels(2)
+          .format('s16le')
+          .on('error', (err) => {
+            logger.error('FFmpeg error:', err);
+            cleanup();
+            reject(err);
+          })
+          .pipe();
+
+        ffmpegStream.pipe(opusEncoder);
 
         const cleanup = () => {
-          clearTimeout(timeout);
           try {
             fs.unlinkSync(tempPath);
           } catch (e) {
           }
         };
 
-        player.once(AudioPlayerStatus.Idle, () => {
+        connection.setSpeaking(true);
+
+        opusEncoder.on('data', (chunk) => {
+          if (connection.state.status === 'ready') {
+            try {
+              connection.dispatchAudio(chunk);
+            } catch (err) {
+              logger.error('Audio dispatch error:', err);
+            }
+          }
+        });
+
+        opusEncoder.on('end', () => {
+          connection.setSpeaking(false);
           logger.success('✅ Audio playback finished');
           cleanup();
           resolve();
         });
 
-        player.once('error', (error) => {
-          logger.error('Audio playback error:', error);
+        opusEncoder.on('error', (err) => {
+          connection.setSpeaking(false);
+          logger.error('Opus encoder error:', err);
           cleanup();
-          reject(error);
+          reject(err);
         });
+
+        setTimeout(() => {
+          connection.setSpeaking(false);
+          logger.warn('Audio playback timeout');
+          cleanup();
+          resolve();
+        }, 30000);
       });
     } catch (error) {
       logger.error('Failed to play audio:', error);
