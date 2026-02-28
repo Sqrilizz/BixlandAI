@@ -1,9 +1,7 @@
-import edgeTTS from 'edge-tts-node';
+import { EdgeSpeechTTS } from '@lobehub/tts';
 import { logger } from '../../utils/logger.js';
-import { writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
 
-const { MsEdgeTTS, OUTPUT_FORMAT } = edgeTTS;
+const tts = new EdgeSpeechTTS();
 
 /**
  * Generate TTS using Microsoft Edge TTS
@@ -17,28 +15,14 @@ export async function generateEdgeTTS(text, voice = 'ru-RU-DmitryNeural') {
   try {
     logger.debug(`Edge TTS: ${voice}`);
     
-    const tts = new MsEdgeTTS();
-    
-    // Set metadata with proper error handling
-    try {
-      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    } catch (metadataError) {
-      logger.warn('Edge TTS metadata error, retrying with defaults');
-      await tts.setMetadata(voice, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
-    }
-    
-    const tempFile = join(process.cwd(), `temp_edge_${Date.now()}.mp3`);
-    
-    await tts.toFile(tempFile, text);
-    
-    const fs = await import('fs/promises');
-    const audioBuffer = await fs.readFile(tempFile);
-    
-    try {
-      await fs.unlink(tempFile);
-    } catch (err) {
-      logger.warn('Failed to delete temp file:', err.message);
-    }
+    const response = await tts.create({
+      input: text,
+      options: {
+        voice: voice,
+      },
+    });
+
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
     
     if (!audioBuffer || audioBuffer.length === 0) {
       throw new Error('No audio data generated');
