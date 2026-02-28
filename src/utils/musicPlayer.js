@@ -6,7 +6,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 
 const execAsync = promisify(exec);
-const ytdlpPath = join(homedir(), '.local', 'bin', 'yt-dlp');
+const ytdlpPath = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 
 class MusicQueue {
   constructor() {

@@ -146,7 +146,6 @@ async function generateYellowFireTTS(text) {
     const voice = config.voice.ttsVoice;
     logger.debug(`TTS using voice: ${voice}`);
     
-    // Step 1: Create TTS task
     const taskResponse = await axios.post(`${API_BASE}/tts`, {
       model: 'elevenlabs',
       prompt: text,
@@ -161,10 +160,8 @@ async function generateYellowFireTTS(text) {
     const { request_id, wait } = taskResponse.data;
     logger.debug(`TTS request_id: ${request_id}`);
 
-    // Step 2: Wait
     await new Promise(resolve => setTimeout(resolve, wait * 1000));
 
-    // Step 3: Poll for result
     for (let attempt = 0; attempt < 30; attempt++) {
       const statusResponse = await axios.get(`${API_BASE}/status/${request_id}`, {
         headers: {
@@ -173,22 +170,39 @@ async function generateYellowFireTTS(text) {
       });
 
       const { status, response } = statusResponse.data;
+      
+      logger.debug(`TTS status: ${status}, attempt: ${attempt + 1}`);
 
       if (status === 'completed' || status === 'success') {
-        // Extract base64 from data URI
         const dataUri = response.voice_model_v3?.[0];
         if (!dataUri) {
+          logger.error('No audio data in response:', JSON.stringify(response).slice(0, 200));
           throw new Error('No audio data in response');
         }
 
-        // data:audio/mpeg;base64,<base64>
+        if (!dataUri.includes('base64,')) {
+          logger.error('Invalid data URI format:', dataUri.slice(0, 100));
+          throw new Error('Invalid audio data format');
+        }
+
         const base64Data = dataUri.split(',')[1];
+        if (!base64Data || base64Data.length === 0) {
+          logger.error('Empty base64 data');
+          throw new Error('Empty audio data');
+        }
+        
         const audioBuffer = Buffer.from(base64Data, 'base64');
+        logger.debug(`TTS audio buffer size: ${audioBuffer.length} bytes`);
+        
+        if (audioBuffer.length === 0) {
+          throw new Error('Generated audio buffer is empty');
+        }
         
         return audioBuffer;
       }
 
       if (status === 'failed' || status === 'error') {
+        logger.error('TTS generation failed:', response);
         throw new Error('TTS generation failed');
       }
 
@@ -198,6 +212,9 @@ async function generateYellowFireTTS(text) {
     throw new Error('TTS timeout');
   } catch (error) {
     logger.error('TTS API error:', error.response?.data || error.message);
+    throw error;
+  }
+}
     throw error;
   }
 }
