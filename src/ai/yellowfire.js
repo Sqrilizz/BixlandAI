@@ -5,21 +5,19 @@ import { normalizeForTTS } from '../utils/textNormalizer.js';
 
 const API_BASE = 'https://yellowfire.ru/api/v2';
 
-let elevenlabsTTS, piperTTS, googleTTS, edgeTTS, checkPiperInstalled;
+let elevenlabsTTS, piperTTS, googleTTS, checkPiperInstalled;
 
 async function loadTTSModules() {
   if (!elevenlabsTTS) {
     const modules = await Promise.all([
       import('./tts/elevenlabsTTS.js'),
       import('./tts/piperTTS.js'),
-      import('./tts/googleTTS.js'),
-      import('./tts/edgeTTS.js')
+      import('./tts/googleTTS.js')
     ]);
     elevenlabsTTS = modules[0].generateElevenLabsTTS;
     piperTTS = modules[1].generatePiperTTS;
     checkPiperInstalled = modules[1].checkPiperInstalled;
     googleTTS = modules[2].generateGoogleTTS;
-    edgeTTS = modules[3].generateEdgeTTS;
   }
 }
 
@@ -102,12 +100,6 @@ export async function generateTTS(text) {
   logger.debug(`TTS normalized: "${text.slice(0, 50)}..." -> "${normalizedText.slice(0, 50)}..."`);
   
   try {
-    if (ttsProvider === 'edge') {
-      const voiceName = process.env.EDGE_TTS_VOICE || 'ru-RU-DmitryNeural';
-      logger.debug(`Using Edge TTS: ${voiceName}`);
-      return await edgeTTS(normalizedText, voiceName);
-    }
-    
     if (ttsProvider === 'google') {
       const voiceName = process.env.GOOGLE_TTS_VOICE || 'ru-RU-Wavenet-B';
       logger.debug(`Using Google TTS: ${voiceName}`);
@@ -115,14 +107,14 @@ export async function generateTTS(text) {
     }
     
     if (ttsProvider === 'piper') {
-      const voiceModel = process.env.PIPER_VOICE || 'ru_RU-dmitri-medium';
+      const voiceModel = process.env.PIPER_VOICE || 'ru_RU-ruslan-medium';
       logger.debug(`Using Piper TTS: ${voiceModel}`);
       try {
         return await piperTTS(normalizedText, voiceModel);
       } catch (error) {
         logger.error(`Piper TTS failed: ${error.message}`);
-        logger.warn('Falling back to Edge TTS');
-        return await edgeTTS(normalizedText);
+        logger.warn('Falling back to YellowFire TTS');
+        return await generateYellowFireTTS(normalizedText);
       }
     }
     
@@ -139,14 +131,9 @@ export async function generateTTS(text) {
     logger.debug('Using YellowFire TTS');
     return await generateYellowFireTTS(normalizedText);
   } catch (error) {
-    if (ttsProvider !== 'edge' && ttsProvider !== 'yellowfire') {
-      logger.warn(`${ttsProvider} TTS failed, falling back to Edge TTS`);
-      try {
-        return await edgeTTS(normalizedText);
-      } catch (edgeError) {
-        logger.error('Edge TTS also failed, trying YellowFire');
-        return await generateYellowFireTTS(normalizedText);
-      }
+    if (ttsProvider !== 'yellowfire') {
+      logger.warn(`${ttsProvider} TTS failed, falling back to YellowFire`);
+      return await generateYellowFireTTS(normalizedText);
     }
     
     logger.error('TTS error:', error.message);

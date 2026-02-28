@@ -18,17 +18,22 @@ export async function generateEdgeTTS(text, voice = 'ru-RU-DmitryNeural') {
     logger.debug(`Edge TTS: ${voice}`);
     
     const tts = new MsEdgeTTS();
-    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    
+    // Set metadata with proper error handling
+    try {
+      await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+    } catch (metadataError) {
+      logger.warn('Edge TTS metadata error, retrying with defaults');
+      await tts.setMetadata(voice, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
+    }
     
     const tempFile = join(process.cwd(), `temp_edge_${Date.now()}.mp3`);
     
     await tts.toFile(tempFile, text);
     
-    // Read the file
     const fs = await import('fs/promises');
     const audioBuffer = await fs.readFile(tempFile);
     
-    // Clean up
     try {
       await fs.unlink(tempFile);
     } catch (err) {
