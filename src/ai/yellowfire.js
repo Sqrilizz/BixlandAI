@@ -215,6 +215,3 @@ async function generateYellowFireTTS(text) {
     throw error;
   }
 }
-    throw error;
-  }
-}
